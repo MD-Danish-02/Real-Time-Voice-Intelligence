@@ -1,0 +1,3 @@
+# Webhooks
+`POST /api/v1/webhooks/crm/{provider}/{connection_id}`: tenant resolved from the stored connection -> size cap -> provider HMAC verified -> optional `x-webhook-timestamp` replay window (5 min) -> persisted in `crm_events` (unique key = idempotency) -> `202` -> Celery `process_crm_event` fetches the latest record and upserts. Duplicates return `{"duplicate": true}` and are not re-processed. If the queue is down the event stays persisted and reconciliation catches up.
+`POST /webhooks/telephony/{provider}/{call_id}?sig=...` - URL is HMAC-signed when the call is dialed. `GET/POST /webhooks/whatsapp` - Meta verify-token handshake + `X-Hub-Signature-256`.

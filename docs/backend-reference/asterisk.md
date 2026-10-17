@@ -1,0 +1,2 @@
+# Asterisk / ARI
+`infrastructure/asterisk/*.conf` is a development config (ARI on :8088, a placeholder PJSIP trunk with `REPLACE_ME` values, Stasis dialplan). Change `ARI_PASSWORD` in both `ari.conf` and `.env`. `AsteriskARIClient` implements originate/answer/hangup/redirect/record/externalMedia/event stream; `telephony/asterisk/event_handler.py` maps ARI events to call state (tested with synthetic events); `python -m app.voice_pipeline.worker` runs the event loop. Never verified against a live Asterisk or a PSTN trunk.

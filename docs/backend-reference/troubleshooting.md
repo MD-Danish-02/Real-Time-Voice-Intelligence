@@ -1,0 +1,2 @@
+# Troubleshooting
+* `/ready` 503 -> check `checks` (database/redis). * Login 500 right after boot -> DB not migrated. * Leads not called -> `GET /leads/{id}/eligibility` gives the exact reason (hours, DNC, retry interval...). * No calls dispatched -> is `scheduler` (beat) running? * Webhook 401 -> wrong secret/signature; 404 -> wrong connection id. * Website ingestion "private address" -> SSRF guard working as intended. * Production won't start -> a `*_PROVIDER_MODE` is still `mock`.

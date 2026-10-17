@@ -1,0 +1,2 @@
+# Database
+PostgreSQL 16 + pgvector. Tenant-owned tables carry `tenant_id` (indexed). Highlights: `crm_events` unique `(tenant_id, provider, provider_event_id)`; `leads` unique `(tenant_id, crm_provider, provider_lead_id)`; `lead_call_state` 1:1 with lead; `call_jobs` unique `(tenant_id, idempotency_key)` **plus** a partial unique index allowing one active job per lead; HNSW cosine index on `knowledge_chunks.embedding`. Analytics use SQL aggregates only.

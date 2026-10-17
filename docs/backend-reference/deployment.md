@@ -1,0 +1,2 @@
+# Deployment
+Set `ENV=production`, real `JWT_SECRET`/`ENCRYPTION_KEY`, `ALLOW_DEMO_SEED=false`, all `*_PROVIDER_MODE` to live values (boot fails otherwise), a managed Postgres with pgvector, Redis, S3 bucket. Put `infrastructure/nginx/nginx.conf` (or Caddy/Cloudflare) in front with TLS; keep Asterisk SIP/RTP ports exposed only to your carrier. Run `migrate` before rolling `backend`, `worker`, `scheduler` (exactly one beat). Scrape `/metrics`.

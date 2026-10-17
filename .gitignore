@@ -1,0 +1,17 @@
+.env
+.env.backup
+.env.local
+.audit/
+__pycache__/
+.pytest_cache/
+node_modules/
+.next/
+*.tsbuildinfo
+.venv/
+*.log
+*.db
+artifacts/
+*.zip
+models/
+openapi.json
+test_login.json

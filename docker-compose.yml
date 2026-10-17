@@ -1,0 +1,65 @@
+# Development stack. `cp .env.example .env` first. Migrations run automatically via the `migrate` service.
+x-api: &api
+  build: ./apps/api
+  env_file: .env
+  depends_on:
+    postgres: {condition: service_healthy}
+    redis: {condition: service_healthy}
+    migrate: {condition: service_completed_successfully}
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment: {POSTGRES_USER: voxai, POSTGRES_PASSWORD: voxai, POSTGRES_DB: voxai}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U voxai"], interval: 5s, timeout: 5s, retries: 10}
+  redis:
+    image: redis:7-alpine
+    healthcheck: {test: ["CMD", "redis-cli", "ping"], interval: 5s, timeout: 3s, retries: 10}
+  migrate:
+    build: ./apps/api
+    env_file: .env
+    command: alembic upgrade head
+    depends_on: {postgres: {condition: service_healthy}}
+    restart: "no"
+  backend:
+    <<: *api
+    ports: ["${API_HOST_PORT:-8001}:8000", "10000-10020:10000-10020/udp"]
+    healthcheck: {test: ["CMD", "curl", "-f", "http://localhost:8000/health"], interval: 10s, timeout: 5s, retries: 10}
+  worker:
+    <<: *api
+    command: celery -A app.workers.celery_app.celery_app worker -l info -c 4
+  scheduler:
+    <<: *api
+    command: celery -A app.workers.celery_app.celery_app beat -l info
+  voice-worker:
+    <<: *api
+    command: python -m app.voice_pipeline.worker
+    profiles: ["telephony"]
+  frontend:
+    build:
+      context: ./apps/web
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8001}
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8001}
+    ports: ["3000:3000"]
+    depends_on: [backend]
+  asterisk:
+    image: andrius/asterisk:latest
+    volumes:
+      - ./infrastructure/asterisk:/etc/asterisk:ro
+    ports: ["5060:5060/udp", "8088:8088", "10000-10020:10000-10020/udp"]
+    profiles: ["telephony"]        # docker compose --profile telephony up
+  prometheus:
+    image: prom/prometheus
+    volumes: ["./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9090:9090"]
+    profiles: ["observability"]
+  grafana:
+    image: grafana/grafana
+    ports: ["3001:3000"]
+    profiles: ["observability"]
+
+volumes: {pgdata: {}}

@@ -1,0 +1,9 @@
+torch>=2.2.0
+torchaudio>=2.2.0
+chatterbox-tts
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+numpy>=1.24.0
+soundfile>=0.12.1
+scipy>=1.11.0
+pydantic>=2.6.0
