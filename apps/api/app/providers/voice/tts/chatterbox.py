@@ -23,6 +23,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.providers.provider_safety import require_mock_provider
 
 logger = get_logger("voice.tts.chatterbox")
 
@@ -85,12 +86,13 @@ def normalize_indian_text(text: str) -> str:
     return t
 
 
-def split_into_clauses(text: str) -> list[str]:
+def split_into_clauses(text: str, language: str = "hi") -> list[str]:
     """
     Splits text into short conversational clauses for low-latency streaming TTS.
     Yields early clauses so the user hears audio while subsequent text is synthesized.
     """
-    normalized = normalize_indian_text(text)
+    # English text stays English; Hindi uses the Indian speech normalizer.
+    normalized = normalize_indian_text(text) if language.lower() in ("hi", "hindi") else text.strip()
     # Split on sentence boundaries and major pause punctuation
     raw_clauses = re.split(r"(?<=[.!?।,\n])\s+", normalized)
     clauses: list[str] = []
@@ -296,6 +298,7 @@ class ChatterboxTTSProvider:
     provider_name: str = "chatterbox"
 
     def __init__(self, base_url: Optional[str] = None, voice_id: Optional[str] = None) -> None:
+        require_mock_provider(self.provider_name, "TTS")
         self.base_url = (base_url or settings.CHATTERBOX_BASE_URL).rstrip("/")
         self.voice_id = voice_id or settings.CHATTERBOX_VOICE_ID or "riya"
         self._engine: Optional[ChatterboxEngine] = None

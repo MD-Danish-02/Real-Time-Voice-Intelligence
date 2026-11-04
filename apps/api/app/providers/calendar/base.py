@@ -8,6 +8,7 @@ from typing import Optional
 import httpx
 
 from app.core.config import settings
+from app.providers.provider_safety import require_mock_provider
 
 
 @dataclass
@@ -30,6 +31,10 @@ class CalendarProviderError(Exception):
 
 class CalendarProvider(ABC):
     provider_name: str = "base"
+
+    def __new__(cls, *args, **kwargs):
+        require_mock_provider(cls.provider_name, "Calendar")
+        return super().__new__(cls)
 
     @abstractmethod
     async def get_authorization_url(self, *, state: str) -> str:
@@ -195,6 +200,7 @@ class GoogleCalendarProvider(CalendarProvider):
 
 
 def get_calendar_provider(provider_name: str) -> CalendarProvider:
+    require_mock_provider(provider_name, "Calendar")
     if provider_name == "google":
         return GoogleCalendarProvider()
     if provider_name == "mock":

@@ -11,7 +11,25 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _eager_celery():
+def _eager_celery(monkeypatch):
+    from app.core import config as config_module
+    from app.events import bus
+    from app.services import eligibility_service
+
+    class FakeRedis:
+        async def set(self, *args, **kwargs):
+            return True
+
+        async def delete(self, *args, **kwargs):
+            return 1
+
+        async def publish(self, *args, **kwargs):
+            return 1
+
+    fake_redis = FakeRedis()
+    monkeypatch.setattr(eligibility_service, "_get_redis", lambda: fake_redis)
+    monkeypatch.setattr(bus, "_r", lambda: fake_redis)
+    monkeypatch.setattr(config_module.settings, "TELEPHONY_PROVIDER_MODE", "mock")
     celery_app.conf.task_always_eager = True
     celery_app.conf.task_eager_propagates = True
     yield
@@ -39,9 +57,11 @@ def test_sync_creates_leads_and_automation_queues_calls_then_dispatch_dials():
         eng = create_engine(settings.DATABASE_URL)
         with eng.begin() as db:
             assert db.execute(text("select count(*) from call_jobs where status='pending'")).scalar() == 4
+            assert db.execute(text("select count(*) from automation_run_logs where trigger_event='lead.created' and success=true")).scalar() == 4
         run_crm_sync.delay(tenant, conn["id"], "reconciliation")     # re-sync must not queue duplicates
         with eng.begin() as db:
             assert db.execute(text("select count(*) from call_jobs")).scalar() == 4
+            assert db.execute(text("select count(*) from automation_run_logs where trigger_event='lead.created'")).scalar() == 4
         dispatch_due_call_jobs.delay()                                # -> dial_call per job (mock telephony)
         calls = c.get("/api/v1/calls", headers=h).json()
         assert calls["total"] == 4 and all(i["status"] == "dialing" for i in calls["items"])

@@ -15,6 +15,7 @@ from app.core.logging import get_logger
 from app.models.crm import CRMConnection, CRMEvent, CRMSyncJob
 from app.models.enums import CallingStatus, CRMConnectionStatus, CRMEventStatus, SyncJobStatus
 from app.models.lead import Lead, LeadCallState
+from app.models.scheduling import AutomationRunLog
 from app.providers.crm.base import CRMProviderError, NormalizedLead
 from app.services.dnc_service import apply_dnc_state
 from app.providers.crm.factory import get_crm_provider
@@ -175,6 +176,17 @@ async def _upsert_lead(db: AsyncSession, tenant_id: uuid.UUID, connection: CRMCo
         call_state = LeadCallState(tenant_id=tenant_id, lead_id=lead.id, calling_status=CallingStatus.NOT_CALLED.value)
         db.add(call_state)
         await db.flush()
+    if created:
+        # Persist the automation work in the same transaction as the new lead.
+        # A later sync can retry this row if dispatch fails or the process exits.
+        db.add(AutomationRunLog(
+            tenant_id=tenant_id,
+            trigger_event="lead.created",
+            resource_type="lead",
+            resource_id=str(lead.id),
+            success=False,
+            detail="outbox:pending lead.created automation",
+        ))
     await apply_dnc_state(db, tenant_id, lead, call_state)
     return lead, created
 
@@ -259,6 +271,16 @@ async def run_sync_job(db: AsyncSession, tenant_id: uuid.UUID, connection: CRMCo
         job.finished_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(job)
+
+    # Both the API's manual sync and the worker's scheduled sync pass through
+    # here. The durable run-log row above makes this safe to retry on a later
+    # sync if enqueueing fails or this process stops after the import commit.
+    try:
+        from app.automation.engine import retry_pending_lead_created_automations
+        await retry_pending_lead_created_automations(db, tenant_id)
+    except Exception as exc:  # noqa: BLE001 - pending rows remain available for the next sync
+        logger.error("lead_created_automation_retry_failed", tenant_id=str(tenant_id), error=str(exc))
+    await db.refresh(job)
     return job
 
 
@@ -332,6 +354,8 @@ async def process_webhook_event(db: AsyncSession, event: CRMEvent, connection: C
         event.status = CRMEventStatus.FAILED.value
         event.error = str(exc)
     await db.commit()
+    from app.automation.engine import retry_pending_lead_created_automations
+    await retry_pending_lead_created_automations(db, event.tenant_id)
 
 
 async def register_webhooks_safe(db: AsyncSession, connection: CRMConnection) -> None:

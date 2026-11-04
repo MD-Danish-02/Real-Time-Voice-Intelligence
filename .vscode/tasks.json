@@ -1,0 +1,23 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run Voice API on 8001",
+			"type": "shell",
+			"command": "C:\\Users\\Aman\\OneDrive - VVNT\\Documents\\ChatGPT\\AI-Final-Voice-Agent\\.venv313\\Scripts\\python.exe",
+			"args": [
+				"-m",
+				"uvicorn",
+				"app.main:app",
+				"--app-dir",
+				"apps/api",
+				"--host",
+				"127.0.0.1",
+				"--port",
+				"8001"
+			],
+			"isBackground": true,
+			"problemMatcher": []
+		}
+	]
+}

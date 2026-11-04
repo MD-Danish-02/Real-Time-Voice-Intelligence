@@ -1,6 +1,7 @@
 """
 Hardware Safety and Provider Runtime Checker.
 Inspects CPU, RAM, GPU, Disk, Groq connectivity, faster-whisper and Chatterbox availability.
+Live provider checks require VOXAI_ALLOW_LIVE_PROVIDER_DIAGNOSTICS=1 and are disabled when ENV=test.
 """
 import ctypes
 import os
@@ -90,6 +91,10 @@ def check_hardware():
 
 
 def check_groq():
+    if os.environ.get("ENV", "").strip().lower() == "test":
+        raise RuntimeError("Live provider diagnostics are disabled in test safety mode.")
+    if os.environ.get("VOXAI_ALLOW_LIVE_PROVIDER_DIAGNOSTICS") != "1":
+        raise RuntimeError("Set VOXAI_ALLOW_LIVE_PROVIDER_DIAGNOSTICS=1 to opt in to live provider diagnostics.")
     print("\n" + "=" * 70)
     print("PHASE 3: GROQ LLM VERIFICATION")
     print("=" * 70)
@@ -198,6 +203,10 @@ def check_groq():
 
 
 def check_chatterbox():
+    if os.environ.get("ENV", "").strip().lower() == "test":
+        raise RuntimeError("Live provider diagnostics are disabled in test safety mode.")
+    if os.environ.get("VOXAI_ALLOW_LIVE_PROVIDER_DIAGNOSTICS") != "1":
+        raise RuntimeError("Set VOXAI_ALLOW_LIVE_PROVIDER_DIAGNOSTICS=1 to opt in to live provider diagnostics.")
     print("\n" + "=" * 70)
     print("PHASE 4: REAL CHATTERBOX AVAILABILITY AUDIT")
     print("=" * 70)

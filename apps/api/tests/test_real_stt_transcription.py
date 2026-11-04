@@ -17,43 +17,7 @@ if hasattr(sys.stdout, "reconfigure"):
 # Reaching repo root from tests
 test_dir = os.path.dirname(os.path.abspath(__file__))
 api_dir = os.path.dirname(test_dir)
-apps_dir = os.path.dirname(api_dir)
-repo_root = os.path.dirname(apps_dir)
 sys.path.insert(0, api_dir)
-
-# Read GROQ_API_KEY from repo root .env if not in environment
-env_path = os.path.join(repo_root, ".env")
-groq_key = ""
-if os.path.exists(env_path):
-    with open(env_path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith("GROQ_API_KEY="):
-                val = line.split("=", 1)[1].strip().strip('"').strip("'")
-                if val:
-                    groq_key = val
-                    os.environ["GROQ_API_KEY"] = val
-
-# Inject minimal settings if pydantic_settings not installed on host
-try:
-    import pydantic_settings
-except ImportError:
-    import types
-    cfg_mod = types.ModuleType("app.core.config")
-    class DummySettings:
-        GROQ_API_KEY = groq_key
-        STT_LANGUAGE = "hi"
-        FASTER_WHISPER_MODEL = "base"
-        STT_PROVIDER_MODE = "groq_whisper"
-    cfg_mod.settings = DummySettings()
-    sys.modules["app.core.config"] = cfg_mod
-
-    # Also dummy structlog / logger
-    log_mod = types.ModuleType("app.core.logging")
-    import logging
-    log_mod.get_logger = lambda name: logging.getLogger(name)
-    sys.modules["app.core.logging"] = log_mod
-
 
 def make_spoken_pcm(duration_sec: float = 2.5, f0: float = 160.0) -> bytes:
     """Generates 16kHz PCM16 audio simulating human speech formants."""
@@ -73,6 +37,11 @@ def make_spoken_pcm(duration_sec: float = 2.5, f0: float = 160.0) -> bytes:
 
 
 async def run_stt_test():
+    if os.environ.get("ENV", "").strip().lower() == "test":
+        raise RuntimeError("Live STT diagnostics are disabled in test safety mode.")
+    if os.environ.get("VOXAI_ALLOW_LIVE_STT_DIAGNOSTIC") != "1":
+        raise RuntimeError("Set VOXAI_ALLOW_LIVE_STT_DIAGNOSTIC=1 to opt in to this live diagnostic.")
+
     print("=" * 70)
     print("REAL STT TRANSCRIPTION TEST: GROQ WHISPER (whisper-large-v3-turbo)")
     print("=" * 70)

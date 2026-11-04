@@ -236,7 +236,7 @@ async def load_all_rows(job: LeadImportJob) -> list[dict[str, str]]:
 async def run_import(db: AsyncSession, job: LeadImportJob) -> LeadImportJob:
     """The 'confirm' step: re-parses the file with the stored mapping and upserts every valid, non-duplicate
     row through the same lead-upsert path CRM sync uses (dedup, phone normalization, DNC check, LeadCallState)."""
-    from app.automation.engine import emit
+    from app.automation.engine import retry_pending_lead_created_automations
 
     job.status = "importing"
     job.started_at = datetime.now(timezone.utc)
@@ -254,7 +254,6 @@ async def run_import(db: AsyncSession, job: LeadImportJob) -> LeadImportJob:
         conn = await get_or_create_import_connection(db, job.tenant_id)
 
         errors_sample = []
-        created_lead_ids = []
         for r in results:
             if r.errors:
                 job.invalid_rows += 1
@@ -267,10 +266,8 @@ async def run_import(db: AsyncSession, job: LeadImportJob) -> LeadImportJob:
             job.valid_rows += 1
             try:
                 async with db.begin_nested():
-                    lead, created = await _upsert_lead(db, job.tenant_id, conn, r.normalized)
+                    await _upsert_lead(db, job.tenant_id, conn, r.normalized)
                 job.imported_rows += 1
-                if created:
-                    created_lead_ids.append(lead.id)
             except Exception as exc:  # noqa: BLE001 - one bad row must not abort the whole import
                 job.skipped_rows += 1
                 if len(errors_sample) < 50:
@@ -285,8 +282,10 @@ async def run_import(db: AsyncSession, job: LeadImportJob) -> LeadImportJob:
                                    action="lead.imported", resource_type="lead_import_job", resource_id=str(job.id),
                                    metadata={"imported_rows": job.imported_rows, "filename": job.original_filename})
 
-        for lead_id in created_lead_ids:  # fire the same automation a CRM sync would
-            await emit(db, "lead.created", tenant_id=job.tenant_id, resource_id=lead_id, resource_type="lead")
+        try:
+            await retry_pending_lead_created_automations(db, job.tenant_id)
+        except Exception as exc:  # noqa: BLE001 - imported leads and pending automation are already durable
+            logger.error("lead_import_automation_retry_failed", job_id=str(job.id), error=str(exc))
     except Exception as exc:  # noqa: BLE001
         job.status = "failed"
         job.error = str(exc)[:2000]

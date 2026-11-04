@@ -6,10 +6,11 @@ import json
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Callable, Optional
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.providers.provider_safety import require_mock_provider
 
 logger = get_logger("voice.llm")
 
@@ -23,7 +24,7 @@ class ToolCall:
 
 @dataclass
 class LLMMetrics:
-    ttft_ms: float = 0.0  # time to first token
+    ttft_ms: Optional[float] = None  # unavailable for non-streaming completions
     total_latency_ms: float = 0.0
     token_count: int = 0
 
@@ -39,6 +40,10 @@ class LLMResponse:
 
 class LLMProvider(ABC):
     provider_name: str = "base"
+
+    def __new__(cls, *args, **kwargs):
+        require_mock_provider(cls.provider_name, "LLM")
+        return super().__new__(cls)
 
     @abstractmethod
     async def chat(
@@ -61,6 +66,18 @@ class LLMProvider(ABC):
         max_tokens: int = 500,
     ) -> AsyncGenerator[str, None]:
         ...
+
+    async def chat_stream_response(
+        self,
+        *,
+        messages: list[dict],
+        tools: Optional[list[dict]] = None,
+        temperature: float = 0.4,
+        max_tokens: int = 500,
+        on_text_delta: Optional[Callable[[str], None]] = None,
+    ) -> LLMResponse:
+        """Optional full-response streaming; existing providers retain chat behavior."""
+        return await self.chat(messages=messages, tools=tools, temperature=temperature, max_tokens=max_tokens)
 
     @abstractmethod
     async def structured_completion(self, *, messages: list[dict], json_schema: dict) -> dict:
@@ -147,6 +164,7 @@ class GroqLLMProvider(LLMProvider):
     """Real Groq adapter with streaming and tool call parsing."""
 
     provider_name = "groq"
+    supports_incremental_text = True
 
     def __init__(self) -> None:
         from groq import AsyncGroq  # imported lazily
@@ -175,31 +193,87 @@ class GroqLLMProvider(LLMProvider):
             max_tokens=max_tokens,
         )
         total_latency = (time.perf_counter() - t0) * 1000.0
-
         choice = resp.choices[0]
-        tool_calls = []
-        if choice.message.tool_calls:
-            for tc in choice.message.tool_calls:
-                tool_calls.append(
-                    ToolCall(
-                        id=tc.id,
-                        name=tc.function.name,
-                        arguments=json.loads(tc.function.arguments or "{}"),
-                    )
-                )
-
+        tool_calls = [
+            ToolCall(id=tc.id, name=tc.function.name,
+                     arguments=json.loads(tc.function.arguments or "{}"))
+            for tc in (choice.message.tool_calls or [])
+        ]
         tokens = resp.usage.total_tokens if resp.usage else 0
-        metrics = LLMMetrics(
-            ttft_ms=total_latency * 0.4,  # conservative estimate for non-streaming
-            total_latency_ms=total_latency,
-            token_count=tokens,
-        )
-
         return LLMResponse(
             content=choice.message.content,
             tool_calls=tool_calls,
             finish_reason=choice.finish_reason or "stop",
             raw=resp.model_dump(),
+            metrics=LLMMetrics(ttft_ms=None, total_latency_ms=total_latency, token_count=tokens),
+        )
+
+    async def chat_stream_response(
+        self,
+        *,
+        messages: list[dict],
+        tools: Optional[list[dict]] = None,
+        temperature: float = 0.4,
+        max_tokens: int = 500,
+        on_text_delta: Optional[Callable[[str], None]] = None,
+    ) -> LLMResponse:
+        t0 = time.perf_counter()
+        stream = await self._client.chat.completions.create(
+            model=settings.GROQ_MODEL,
+            messages=messages,
+            tools=self._to_groq_tools(tools),
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=True,
+        )
+        content_parts: list[str] = []
+        streamed_tools: dict[int, dict[str, str]] = {}
+        ttft_ms: Optional[float] = None
+        finish_reason = "stop"
+        try:
+            async for chunk in stream:
+                if not chunk.choices:
+                    continue
+                choice = chunk.choices[0]
+                delta = choice.delta
+                if delta.content:
+                    if ttft_ms is None:
+                        ttft_ms = (time.perf_counter() - t0) * 1000.0
+                    content_parts.append(delta.content)
+                    if on_text_delta:
+                        on_text_delta(delta.content)
+                for tool_delta in (delta.tool_calls or []):
+                    if ttft_ms is None:
+                        ttft_ms = (time.perf_counter() - t0) * 1000.0
+                    entry = streamed_tools.setdefault(tool_delta.index, {"id": "", "name": "", "arguments": ""})
+                    if tool_delta.id:
+                        entry["id"] = tool_delta.id
+                    if tool_delta.function:
+                        entry["name"] += tool_delta.function.name or ""
+                        entry["arguments"] += tool_delta.function.arguments or ""
+                if choice.finish_reason:
+                    finish_reason = choice.finish_reason
+        finally:
+            aclose = getattr(stream, "aclose", None)
+            if aclose:
+                await aclose()
+
+        total_latency = (time.perf_counter() - t0) * 1000.0
+        tool_calls = [
+            ToolCall(id=entry["id"], name=entry["name"],
+                     arguments=json.loads(entry["arguments"] or "{}"))
+            for _, entry in sorted(streamed_tools.items())
+        ]
+        metrics = LLMMetrics(
+            ttft_ms=ttft_ms,
+            total_latency_ms=total_latency,
+        )
+
+        return LLMResponse(
+            content="".join(content_parts) or None,
+            tool_calls=tool_calls,
+            finish_reason=finish_reason,
+            raw={},
             metrics=metrics,
         )
 
@@ -245,6 +319,7 @@ class GroqLLMProvider(LLMProvider):
 
 def get_llm_provider(mode: Optional[str] = None) -> LLMProvider:
     selected = mode or settings.LLM_PROVIDER_MODE
+    require_mock_provider(selected, "LLM")
     if selected == "groq" and settings.GROQ_API_KEY:
         return GroqLLMProvider()
     return MockLLMProvider()

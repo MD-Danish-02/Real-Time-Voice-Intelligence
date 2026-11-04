@@ -16,6 +16,9 @@ def send_password_reset_email(recipient: str, reset_url: str) -> str:
     allows local password recovery without making production appear to send mail
     when no mail provider has been configured.
     """
+    if settings.ENV.strip().lower() == "test":
+        raise RuntimeError("External email delivery is disabled by test safety mode.")
+
     if not settings.SMTP_HOST or not settings.SMTP_FROM_EMAIL:
         if settings.ENV != "development":
             raise RuntimeError("Password reset email is not configured.")

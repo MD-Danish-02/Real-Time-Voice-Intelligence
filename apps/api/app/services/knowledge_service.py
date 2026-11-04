@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.enums import KnowledgeStatus
 from app.models.knowledge import EMBEDDING_DIM, KnowledgeChunk, KnowledgeDocument
+from app.providers.provider_safety import is_test_safety_active
 from app.security.ssrf import UnsafeOutboundURL, validate_public_url
 
 _WORD_RE = re.compile(r"[a-zA-Z0-9']+")
@@ -46,6 +47,8 @@ def _local_hash_embedding(text_value: str) -> list[float]:
 
 
 def _sentence_transformer_embedding(text_value: str) -> list[float]:
+    if is_test_safety_active():
+        raise RuntimeError("Model downloads are disabled by test safety mode.")
     global _sentence_transformer_model
     if _sentence_transformer_model is None:
         from sentence_transformers import SentenceTransformer  # heavy, optional dependency
@@ -54,6 +57,8 @@ def _sentence_transformer_embedding(text_value: str) -> list[float]:
 
 
 def embed_text(text_value: str) -> list[float]:
+    if is_test_safety_active() and settings.KNOWLEDGE_EMBEDDING_MODE != "local":
+        raise RuntimeError("Only local embeddings are enabled by test safety mode.")
     if settings.KNOWLEDGE_EMBEDDING_MODE == "sentence_transformers":
         return _sentence_transformer_embedding(text_value)
     return _local_hash_embedding(text_value)
@@ -143,6 +148,12 @@ async def ingest_website(db: AsyncSession, tenant_id: uuid.UUID, document: Knowl
     only http(s), no redirects to private/internal IP ranges, size and
     timeout caps.
     """
+    if is_test_safety_active():
+        document.status = KnowledgeStatus.FAILED.value
+        document.error = "External website fetch is disabled in test safety mode."
+        await db.commit()
+        return document
+
     import httpx
     try:
         await validate_public_url(url)

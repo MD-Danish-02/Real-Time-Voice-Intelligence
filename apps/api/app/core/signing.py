@@ -43,27 +43,61 @@ def verify_plivo_signature(
     post_params: Dict[str, str],
     signature: str,
     nonce: Optional[str] = None,
+    *,
+    version: Optional[str] = None,
+    method: str = "POST",
 ) -> bool:
     """
     Verify Plivo webhook signature.
     
-    Supports:
-    - Plivo V2/V3 signature using SHA256 and cryptographic nonce.
-    - Plivo V1 signature using SHA256 and legacy SHA1 on full URL + sorted POST params.
-    - Fallback on path_and_query for compatibility with isolated endpoint mocks.
+    Supports version-specific V1, V2, and V3 canonicalization. V3 includes
+    sorted POST fields before the nonce; V2 signs only the callback URL and nonce.
     """
     if not signature or not auth_token:
         return False
 
     import base64
 
-    # 1. Nonce-based signature verification (Plivo V2 / V3)
-    if nonce:
+    signatures = [candidate.strip() for candidate in signature.split(",") if candidate.strip()]
+    if not signatures:
+        return False
+
+    def matches_sha256(message: str) -> bool:
+        digest = hmac.new(
+            auth_token.encode("utf-8"), message.encode("utf-8"), hashlib.sha256
+        ).digest()
+        expected = base64.b64encode(digest).decode("ascii")
+        return any(hmac.compare_digest(expected, candidate) for candidate in signatures)
+
+    normalized_version = version.lower() if version else None
+
+    # Plivo Voice V3 signs the complete URL, case-sensitive sorted POST
+    # parameters (for POST only), and then the per-request nonce.
+    if normalized_version == "v3":
+        if not nonce:
+            return False
+        fields = ""
+        if method.upper() == "POST":
+            fields = "".join(
+                f"{key}{value}" for key, value in sorted(post_params.items())
+            )
+        return matches_sha256(f"{url}{fields}{nonce}")
+
+    # V2 uses URL + nonce and does not include POST fields.
+    if normalized_version == "v2":
+        return bool(nonce) and matches_sha256(f"{url}{nonce}")
+
+    if normalized_version not in (None, "v1"):
+        return False
+
+    # Preserve compatibility for callers of the historical version-agnostic
+    # helper while the webhook route uses explicit header versions.
+    if normalized_version is None and nonce:
         to_sign_nonce = f"{url}{nonce}".encode("utf-8")
         expected_nonce = base64.b64encode(
             hmac.new(auth_token.encode("utf-8"), to_sign_nonce, hashlib.sha256).digest()
         ).decode("utf-8")
-        if hmac.compare_digest(expected_nonce, signature):
+        if any(hmac.compare_digest(expected_nonce, candidate) for candidate in signatures):
             return True
 
     # 2. Parameter-based signature verification (Plivo V1)
@@ -80,12 +114,14 @@ def verify_plivo_signature(
     for text in candidates_to_sign:
         # Check HMAC-SHA256 (standard)
         digest_256 = hmac.new(auth_token.encode("utf-8"), text.encode("utf-8"), hashlib.sha256).digest()
-        if hmac.compare_digest(base64.b64encode(digest_256).decode("utf-8"), signature):
+        expected_256 = base64.b64encode(digest_256).decode("utf-8")
+        if any(hmac.compare_digest(expected_256, candidate) for candidate in signatures):
             return True
 
         # Check HMAC-SHA1 (legacy fallback)
         digest_1 = hmac.new(auth_token.encode("utf-8"), text.encode("utf-8"), hashlib.sha1).digest()
-        if hmac.compare_digest(base64.b64encode(digest_1).decode("utf-8"), signature):
+        expected_1 = base64.b64encode(digest_1).decode("utf-8")
+        if any(hmac.compare_digest(expected_1, candidate) for candidate in signatures):
             return True
 
     return False

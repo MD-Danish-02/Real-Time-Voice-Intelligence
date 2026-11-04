@@ -169,7 +169,8 @@ async def initiate_outbound_call(
         call.status = CallStatus.FAILED.value
         call.end_reason = str(exc)
         call_state.calling_status = CallingStatus.NOT_CALLED.value
-        logger.error("direct_dial_failed", to_number=to_number, error=str(exc))
+        # Avoid logging personal destination numbers or raw provider response bodies.
+        logger.error("direct_dial_failed", call_id=str(call.id), error_type=type(exc).__name__)
         raise
 
     db.add(CallEvent(tenant_id=tenant_id, call_id=call.id, event_type="CALL_DIALING",

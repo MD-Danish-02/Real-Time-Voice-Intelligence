@@ -1,0 +1,20 @@
+# Prioritized next-steps plan
+
+No steps below were executed by this audit. Service starts, external requests, configuration changes, or a paid call require separate approval where noted.
+
+| Priority | Objective | Dependency | Verification | Completion criteria |
+|---|---|---|---|---|
+| 1 — Essential | Preserve/review the 38 existing working-tree changes and identify the intended deploy revision | Repository owner review | `git status` and focused diff review | No unrelated edits lost; intended code/config revision is known |
+| 2 — Essential | Fix Plivo provider ID vs Asterisk channel ID conflation | API/voice source change | Focused unit tests with distinct fake provider and channel IDs; callback and hangup assertions | Provider operations use provider ID; ARI lookups/cleanup use channel ID; no duplicate calls |
+| 3 — Essential | Ensure ARI media setup failure unwinds resources idempotently | Event handler | Mock failures at each allocation stage and assert channel/bridge/session cleanup | No orphan resources after partial failure; repeated cleanup safe |
+| 4 — Essential | Verify live Oracle Asterisk outbound route | Remote authorized read-only access; route was historically missing | Read loaded `from-trunk` dialplan and compare Stasis args with application `call_<UUID>` | Loaded route matches expected outbound pattern without replacing full config |
+| 5 — Essential | Establish stable public callback origin | Domain/DNS/reverse proxy/TLS owner action | DNS A/AAAA/CNAME resolution, HTTPS route response, signature rejection for unsigned request, proxy access logs | Stable HTTPS origin reaches exact API callbacks; no temporary tunnel dependency |
+| 6 — Essential | Verify Plivo account and trunk readiness | Provider console/config, no live call | Confirm account status, SIP trunk/auth/IP rules, permitted caller ID, destination-region policy, wallet/spend cap | Provider setup supports the planned route; do not expose credential values |
+| 7 — Essential | Validate RTP path without calling | Asterisk and Windows worker network coordination | Inspect advertised externalMedia destination, listener binding and port, routing/firewall rules; use approved non-call packet/readiness method if available | Both directions are reachable on the actual selected interfaces/ports; no broad public UDP range |
+| 8 — Essential | Resolve VAD/false interruption and voice quality | Current installed image/runtime plus accessible microphone/speaker | Browser acoustic matrix: silence, short words, Hindi/English/Hinglish, barge-in; inspect per-turn diagnostics | No repeated false turns; first words preserved; one response per turn; voice quality acceptable to owner |
+| 9 — Essential | Verify test-only destructive test isolation | Test secret files, Docker Desktop bind mount, isolated containers | Verify exact project/service labels, loopback port mapping, dedicated volumes, DB identity, Redis auth/ACL, then focused mocked tests | Preflight passes against isolated resources only; no application DB/Redis can be targeted |
+| 10 — Essential | Preflight automation queue before enabling dispatch | Worker/scheduler stopped | Read-only counts/status of pending, due, locked call jobs and queued tasks; confirm no unintended leads | Dispatch scope is empty or explicitly approved; rollback/stop procedure is ready |
+| 11 — Controlled test | Conduct the first authorized outbound call | All essential gates and explicit separate approval | One authorized destination, operator monitors logs and call state, short duration, explicit hangup path | Answer, two-way conversation, interruption, status callback, and cleanup all verified; no duplicate call |
+| 12 — Optional | Improve metrics and dashboard/alerts | Successful controlled call | Compare monotonic event timings and call state visibility | Useful latency/error monitoring without delaying safe call readiness |
+
+Avoid rebuilding the architecture. The remaining work is targeted verification and correction of demonstrated integration risks.

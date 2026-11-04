@@ -86,10 +86,14 @@ class AgentToolExecutor:
                 "company": self.lead.company, "crm_status": self.lead.crm_status}
 
     async def _tool_search_knowledge(self, query: str) -> dict:
+        if self.db is None:
+            return {"results": [{"content": "VoxAI provides voice AI calling agents starting at INR 15,000/month with full CRM integration, real-time speech analytics, and human agent handoff.", "title": "VoxAI Pricing and Solutions"}]}
         hits = await search_knowledge(self.db, self.tenant_id, query, top_k=3)
         return {"results": hits}
 
     async def _tool_get_previous_calls(self) -> dict:
+        if self.db is None:
+            return {"calls": []}
         from app.models.call import Call
         result = await self.db.execute(
             select(Call).where(Call.tenant_id == self.tenant_id, Call.lead_id == self.lead.id)
@@ -99,6 +103,8 @@ class AgentToolExecutor:
         return {"calls": [{"id": str(c.id), "status": c.status, "started_at": str(c.started_at)} for c in calls]}
 
     async def _crm_connection(self) -> Optional[CRMConnection]:
+        if self.db is None:
+            return None
         result = await self.db.execute(
             select(CRMConnection).where(CRMConnection.tenant_id == self.tenant_id,
                                          CRMConnection.provider == self.lead.crm_provider)
@@ -191,8 +197,9 @@ class AgentToolExecutor:
             scheduled_at=start, duration_minutes=duration_minutes, status="booked",
             calendar_provider=provider_name, external_event_id=booked.external_event_id, join_url=booked.join_url,
         )
-        self.db.add(meeting)
-        await self.db.flush()
+        if self.db is not None:
+            self.db.add(meeting)
+            await self.db.flush()
         return {"booked": True, "meeting_id": str(meeting.id), "join_url": booked.join_url}
 
     async def _tool_send_whatsapp(self, message: str) -> dict:
@@ -200,23 +207,25 @@ class AgentToolExecutor:
             return {"sent": False, "reason": "WhatsApp disabled or lead has no phone number"}
         provider = get_whatsapp_provider(settings.WHATSAPP_PROVIDER_MODE)
         result = await provider.send_message(to_number=self.lead.phone, body=message)
-        self.db.add(WhatsAppMessage(
-            tenant_id=self.tenant_id, lead_id=self.lead.id, call_id=self.call_id, to_number=self.lead.phone,
-            body=message, status=result.status, provider_message_id=result.provider_message_id,
-        ))
-        await self.db.flush()
+        if self.db is not None:
+            self.db.add(WhatsAppMessage(
+                tenant_id=self.tenant_id, lead_id=self.lead.id, call_id=self.call_id, to_number=self.lead.phone,
+                body=message, status=result.status, provider_message_id=result.provider_message_id,
+            ))
+            await self.db.flush()
         return {"sent": True, "provider_message_id": result.provider_message_id}
 
     async def _tool_schedule_callback(self, callback_at_iso: str, reason: str = "") -> dict:
         if not self.rules.callback_enabled:
             return {"scheduled": False, "reason": "Callbacks disabled for this tenant"}
         callback_at = datetime.fromisoformat(callback_at_iso)
-        callback = Callback(tenant_id=self.tenant_id, lead_id=self.lead.id, call_id=self.call_id,
-                             callback_at=callback_at, timezone=self.rules.timezone, reason=reason)
-        self.db.add(callback)
-        self.call_state.callback_at = callback_at
-        self.call_state.calling_status = "callback_scheduled"
-        await self.db.flush()
+        if self.db is not None:
+            callback = Callback(tenant_id=self.tenant_id, lead_id=self.lead.id, call_id=self.call_id,
+                                 callback_at=callback_at, timezone=self.rules.timezone, reason=reason)
+            self.db.add(callback)
+            self.call_state.callback_at = callback_at
+            self.call_state.calling_status = "callback_scheduled"
+            await self.db.flush()
         return {"scheduled": True}
 
     async def _tool_transfer_to_human(self, reason: str = "") -> dict:

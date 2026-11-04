@@ -13,5 +13,7 @@ node_modules/
 artifacts/
 *.zip
 models/
+!apps/api/app/models/
+!apps/api/app/models/*.py
 openapi.json
 test_login.json

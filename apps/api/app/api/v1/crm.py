@@ -140,6 +140,8 @@ async def oauth_callback(provider: str, code: str, state: str, db: AsyncSession 
     await audit_service.record(db, tenant_id=tenant_id, actor_user_id=user_id, action="crm.connected",
                                resource_type="crm_connection", resource_id=str(conn.id),
                                metadata={"provider": provider, "via": "oauth"})
+    # Sheets needs an explicit spreadsheet/range mapping before any rows can
+    # be read. Do not launch an import as a side effect of OAuth completion.
     if provider != "google_sheets":
         try:
             from app.workers.tasks import run_crm_sync

@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     # --- STT / TTS ---
     FASTER_WHISPER_MODEL: str = "base"
     STT_LANGUAGE: str = "auto"  # auto | hi | en
-    TTS_PROVIDER_NAME: str = "chatterbox"
+    TTS_PROVIDER_NAME: str = "kokoro_onnx"
     TTS_API_KEY: str = ""
     CHATTERBOX_BASE_URL: str = ""
     CHATTERBOX_VOICE_ID: str = "riya"
@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     KOKORO_VOICE_ID: str = "hf_alpha"
     KOKORO_DEFAULT_LANG: str = "hi"
     KOKORO_SPEED: float = 1.0
+    # kokoro-onnx create() accepts float speed in the inclusive [0.5, 2.0] range.
+    KOKORO_HINDI_SPEED: float = 1.15
+    KOKORO_ENGLISH_SPEED: float = 1.0
 
     # --- Asterisk / ARI / RTP ---
     ARI_BASE_URL: str = "http://asterisk:8088/ari"

@@ -66,7 +66,13 @@ async def enqueue_call_if_eligible(
         if not result.eligible:
             return False, result.reason
 
-        idempotency_key = f"{lead.id}:{call_state.attempt_count + 1}:{reason_hint}"
+        # Replaying the durable lead.created outbox must never create another
+        # call even if its first job has already completed and attempt_count
+        # has advanced. Other retry/callback paths remain attempt-scoped.
+        idempotency_key = (
+            f"{lead.id}:new_lead" if reason_hint == "new_lead"
+            else f"{lead.id}:{call_state.attempt_count + 1}:{reason_hint}"
+        )
         job = CallJob(
             tenant_id=lead.tenant_id, lead_id=lead.id, scheduled_at=datetime.now(timezone.utc),
             attempt_number=call_state.attempt_count + 1, idempotency_key=idempotency_key, reason=result.reason,

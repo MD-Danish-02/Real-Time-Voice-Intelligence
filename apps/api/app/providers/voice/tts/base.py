@@ -14,10 +14,15 @@ from app.providers.voice.tts.chatterbox import (
     TELEPHONY_SAMPLE_RATE,
 )
 from app.providers.voice.tts.indic_f5 import IndicF5TTSProvider
+from app.providers.provider_safety import require_mock_provider
 
 
 class TTSProvider(ABC):
     provider_name: str = "base"
+
+    def __new__(cls, *args, **kwargs):
+        require_mock_provider(cls.provider_name, "TTS")
+        return super().__new__(cls)
 
     @abstractmethod
     async def synthesize(self, *, text: str, voice_id: str = "default", language: str = "hi") -> SynthesisResult:
@@ -60,8 +65,13 @@ class MockTTSProvider(TTSProvider):
 
 def get_tts_provider(mode: Optional[str] = None) -> TTSProvider:
     selected = mode or settings.TTS_PROVIDER_NAME or settings.TTS_PROVIDER_MODE
+    require_mock_provider(selected, "TTS")
     if selected == "chatterbox":
         return ChatterboxTTSProvider()
+    if selected == "kokoro_onnx":
+        from app.providers.voice.tts.kokoro import KokoroTTSProvider
+
+        return KokoroTTSProvider()
     if selected == "kokoro":
         from app.providers.voice.tts.kokoro import KokoroTTSProvider
 

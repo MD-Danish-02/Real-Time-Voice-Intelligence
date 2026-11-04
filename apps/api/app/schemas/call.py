@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CallOut(BaseModel):
@@ -52,6 +52,7 @@ class CallDetailOut(CallOut):
 
 
 class OutboundDialRequest(BaseModel):
-    to_number: str
+    # Plivo requires an E.164 destination; reject local/ambiguous dial strings.
+    to_number: str = Field(pattern=r"^\+[1-9][0-9]{7,14}$")
     lead_id: Optional[uuid.UUID] = None
     custom_prompt: Optional[str] = None

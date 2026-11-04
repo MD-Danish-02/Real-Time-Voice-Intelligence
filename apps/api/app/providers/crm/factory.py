@@ -6,6 +6,7 @@ from app.providers.crm.mock import MockCRMProvider
 from app.providers.crm.pipedrive import PipedriveCRMProvider
 from app.providers.crm.salesforce import SalesforceCRMProvider
 from app.providers.crm.zoho import ZohoCRMProvider
+from app.providers.provider_safety import require_mock_provider
 
 _REGISTRY: dict[str, type[CRMProvider]] = {
     CRMProviderType.MOCK.value: MockCRMProvider,
@@ -19,6 +20,7 @@ _REGISTRY: dict[str, type[CRMProvider]] = {
 
 
 def get_crm_provider(provider_name: str) -> CRMProvider:
+    require_mock_provider(provider_name, "CRM")
     cls = _REGISTRY.get(provider_name)
     if not cls:
         raise ValueError(f"Unknown CRM provider: {provider_name}")

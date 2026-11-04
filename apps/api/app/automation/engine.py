@@ -7,6 +7,7 @@ here. This intentionally does NOT expose an n8n-style visual workflow
 builder (per spec section 40) - it's a fixed, auditable rule set per
 tenant, toggle-able via AutomationRule.is_enabled.
 """
+import uuid
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
@@ -32,23 +33,77 @@ def on_event(event_name: str):
     return _decorator
 
 
-async def emit(db: AsyncSession, event_name: str, **kwargs) -> None:
+async def emit(
+    db: AsyncSession, event_name: str, *, automation_log_id: uuid.UUID | None = None, **kwargs,
+) -> bool:
+    """Run handlers and persist their outcome, reusing a durable log when supplied."""
+    succeeded = True
+    errors: list[str] = []
     for handler in _HANDLERS.get(event_name, []):
         resource_type = kwargs.get("resource_type", event_name)
         resource_id = str(kwargs.get("resource_id", ""))
+        handler_succeeded = True
+        error_detail = None
         try:
             await handler(db, **kwargs)
-            db.add(AutomationRunLog(
-                tenant_id=kwargs["tenant_id"], trigger_event=event_name, resource_type=resource_type,
-                resource_id=resource_id, success=True,
-            ))
         except Exception as exc:  # noqa: BLE001 - one automation failing must not break the request
+            # Handlers may have left the session in a failed transaction. Roll
+            # back before recording failure so the durable retry marker survives.
+            await db.rollback()
+            handler_succeeded = False
+            succeeded = False
+            error_detail = str(exc)[:2000]
+            errors.append(error_detail)
             logger.error("automation_handler_failed", event_name=event_name, error=str(exc))
+        if automation_log_id is not None:
+            run_log = await db.get(AutomationRunLog, automation_log_id)
+            if run_log is None:
+                raise RuntimeError("Automation retry record disappeared before completion")
+            run_log.success = succeeded
+            run_log.detail = None if succeeded else f"outbox:failed {'; '.join(errors) or 'automation failed'}"[:2000]
+        else:
             db.add(AutomationRunLog(
                 tenant_id=kwargs["tenant_id"], trigger_event=event_name, resource_type=resource_type,
-                resource_id=resource_id, success=False, detail=str(exc)[:2000],
+                resource_id=resource_id, success=handler_succeeded,
+                detail=error_detail,
             ))
-        await db.commit()
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+    return succeeded
+
+
+async def retry_pending_lead_created_automations(db: AsyncSession, tenant_id: uuid.UUID) -> None:
+    """Retry durable lead-created work left pending by a failed enqueue or process exit."""
+    result = await db.execute(
+        select(AutomationRunLog.id, AutomationRunLog.resource_id)
+        .where(
+            AutomationRunLog.tenant_id == tenant_id,
+            AutomationRunLog.trigger_event == "lead.created",
+            AutomationRunLog.resource_type == "lead",
+            AutomationRunLog.success.is_(False),
+            AutomationRunLog.detail.like("outbox:%"),
+            AutomationRunLog.resource_id.is_not(None),
+        )
+        .order_by(AutomationRunLog.created_at)
+    )
+    pending = result.all()
+    for log_id, resource_id in pending:
+        try:
+            lead_id = uuid.UUID(resource_id)
+        except (TypeError, ValueError):
+            logger.error("invalid_lead_created_automation_resource", log_id=str(log_id))
+            continue
+        await emit(
+            db,
+            "lead.created",
+            automation_log_id=log_id,
+            tenant_id=tenant_id,
+            resource_id=lead_id,
+            resource_type="lead",
+        )
 
 
 @on_event("lead.created")
@@ -62,8 +117,13 @@ async def _automation_new_lead_call(db: AsyncSession, *, tenant_id, resource_id,
     call_state = (await db.execute(
         select(LeadCallState).where(LeadCallState.lead_id == lead.id)
     )).scalar_one()
+    lead_id_for_log = str(lead.id)
     queued, reason = await enqueue_call_if_eligible(db, tenant, rules, lead, call_state, reason_hint="new_lead")
-    logger.info("automation_new_lead", lead_id=str(lead.id), queued=queued, reason=reason)
+    if not queued and reason == "ALREADY_LOCKED":
+        # Another attempt may have crashed while holding the short-lived lock.
+        # Keep this outbox item retryable instead of acknowledging it as done.
+        raise RuntimeError("lead call enqueue is already in progress")
+    logger.info("automation_new_lead", lead_id=lead_id_for_log, queued=queued, reason=reason)
 
 
 @on_event("call.completed")

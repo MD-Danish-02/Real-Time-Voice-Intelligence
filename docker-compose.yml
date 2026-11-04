@@ -25,7 +25,9 @@ services:
     restart: "no"
   backend:
     <<: *api
-    ports: ["${API_HOST_PORT:-8001}:8000", "10000-10020:10000-10020/udp"]
+    ports:
+      - "127.0.0.1:${API_HOST_PORT:-8001}:8000"
+      - "${VOICE_MEDIA_HOST_EXTERNAL:?VOICE_MEDIA_HOST_EXTERNAL must be set}:${API_HOST_PORT:-8001}:8000"
     healthcheck: {test: ["CMD", "curl", "-f", "http://localhost:8000/health"], interval: 10s, timeout: 5s, retries: 10}
   worker:
     <<: *api
@@ -34,8 +36,19 @@ services:
     <<: *api
     command: celery -A app.workers.celery_app.celery_app beat -l info
   voice-worker:
-    <<: *api
+    # Keep this service independent of the shared API anchor: that anchor
+    # depends on the migration job, while voice-worker must never run migrations.
+    build: ./apps/api
+    env_file: .env
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    restart: unless-stopped
     command: python -m app.voice_pipeline.worker
+    volumes:
+      - ./models/kokoro:/app/models/kokoro:ro
+    ports:
+      - "${VOICE_MEDIA_HOST_EXTERNAL:?VOICE_MEDIA_HOST_EXTERNAL must be set}:10000-10020:10000-10020/udp"
     profiles: ["telephony"]
   frontend:
     build:

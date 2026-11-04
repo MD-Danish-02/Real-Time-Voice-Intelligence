@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
+from app.providers.provider_safety import require_mock_provider
+
 
 @dataclass
 class NormalizedLead:
@@ -51,6 +53,10 @@ class CRMProvider(ABC):
     """Base class every CRM adapter must implement."""
 
     provider_name: str = "base"
+
+    def __new__(cls, *args, **kwargs):
+        require_mock_provider(cls.provider_name, "CRM")
+        return super().__new__(cls)
 
     # --- OAuth / connection lifecycle ---
     @abstractmethod

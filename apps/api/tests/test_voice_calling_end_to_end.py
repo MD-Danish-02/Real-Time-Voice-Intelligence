@@ -86,13 +86,13 @@ async def test_ari_client_methods():
 # 4. Media Session Lifecycle & RTP Packetization
 # ==============================================================================
 def test_rtp_packetizer_and_depacketizer():
-    packetizer = RTPPacketizer(payload_type=96, ssrc=12345)
+    packetizer = RTPPacketizer(ssrc=12345)
     pcm_payload = make_pcm16_audio(duration_sec=0.02)  # 20ms = 640 bytes
     packet = packetizer.pack(pcm_payload)
 
     assert len(packet) == 12 + len(pcm_payload)
     pt, seq, ts, extracted_pcm = RTPPacketizer.unpack(packet)
-    assert pt == 96
+    assert pt == 0  # Static G.711 mu-law payload for Asterisk externalMedia.
     assert extracted_pcm == pcm_payload
 
 
@@ -154,8 +154,9 @@ async def test_chatterbox_normalization_and_synthesis():
     clauses = split_into_clauses("Namaste! Main Riya bol rahi hoon, aap kaise hain? Business kaisa chal raha hai?")
     assert len(clauses) >= 2
 
-    # Synthesize with Chatterbox
-    provider = ChatterboxTTSProvider()
+    # Use the deterministic test provider; live/local Chatterbox execution is
+    # reserved for an explicitly launched manual diagnostic.
+    provider = MockTTSProvider()
     res = await provider.synthesize(text="Namaste, main Riya bol rahi hoon.")
     assert len(res.audio_bytes) > 0
     assert res.sample_rate == 16000
@@ -329,8 +330,8 @@ async def test_inbound_call_routing():
 # ==============================================================================
 @pytest.mark.asyncio
 async def test_tts_benchmark_execution():
-    report = await run_tts_benchmark("chatterbox")
-    assert report["provider"] == "chatterbox"
+    report = await run_tts_benchmark("mock")
+    assert report["provider"] == "mock"
     assert report["phrases_tested"] >= 5
     assert report["average_time_to_first_audio_ms"] > 0
     assert report["overall_real_time_factor"] > 0

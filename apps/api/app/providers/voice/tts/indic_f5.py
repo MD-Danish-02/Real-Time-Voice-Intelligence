@@ -11,6 +11,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.providers.provider_safety import require_mock_provider
 from app.providers.voice.tts.chatterbox import (
     TELEPHONY_SAMPLE_RATE,
     SynthesisMetrics,
@@ -32,6 +33,7 @@ class IndicF5TTSProvider:
     provider_name: str = "indic_f5"
 
     def __init__(self, base_url: Optional[str] = None) -> None:
+        require_mock_provider(self.provider_name, "TTS")
         self.base_url = (base_url or settings.INDICF5_BASE_URL).rstrip("/")
 
     async def synthesize(self, *, text: str, voice_id: str = "default", language: str = "hi") -> SynthesisResult:

@@ -11,6 +11,8 @@ _STATUS_MAP = {
     "completed": "completed", "busy": "busy", "failed": "failed", "no-answer": "no_answer",
 }
 
+MAX_CALL_DURATION_SECONDS = 60
+
 
 class PlivoTelephonyProvider(TelephonyProvider):
     provider_name = "plivo"
@@ -74,11 +76,14 @@ class PlivoTelephonyProvider(TelephonyProvider):
             "answer_method": "POST",
             "hangup_url": hangup_url,
             "hangup_method": "POST",
+            "time_limit": MAX_CALL_DURATION_SECONDS,
         }
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(f"{self._base_url()}/Call/", json=payload, auth=self._auth())
             if resp.status_code >= 400:
-                raise TelephonyProviderError(f"Plivo dial failed: {resp.text}", retryable=resp.status_code >= 500)
+                raise TelephonyProviderError(
+                    f"Plivo dial failed (HTTP {resp.status_code})", retryable=resp.status_code >= 500
+                )
             data = resp.json()
             return DialResult(
                 provider_call_id=data.get("request_uuid", ""), status="queued", raw=data,
@@ -88,7 +93,7 @@ class PlivoTelephonyProvider(TelephonyProvider):
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.delete(f"{self._base_url()}/Call/{provider_call_id}/", auth=self._auth())
             if resp.status_code >= 400 and resp.status_code != 404:
-                raise TelephonyProviderError(f"Plivo hangup failed: {resp.text}")
+                raise TelephonyProviderError(f"Plivo hangup failed (HTTP {resp.status_code})")
 
     async def transfer(self, *, provider_call_id: str, destination: str) -> None:
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -98,18 +103,22 @@ class PlivoTelephonyProvider(TelephonyProvider):
                 auth=self._auth(),
             )
             if resp.status_code >= 400:
-                raise TelephonyProviderError(f"Plivo transfer failed: {resp.text}")
+                raise TelephonyProviderError(f"Plivo transfer failed (HTTP {resp.status_code})")
 
     async def get_call(self, *, provider_call_id: str) -> CallStatusResult:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(f"{self._base_url()}/Call/{provider_call_id}/", auth=self._auth())
             if resp.status_code >= 400:
-                raise TelephonyProviderError(f"Plivo get_call failed: {resp.text}")
+                raise TelephonyProviderError(f"Plivo get_call failed (HTTP {resp.status_code})")
             data = resp.json()
+            try:
+                duration_seconds = int(data["call_duration"]) if data.get("call_duration") is not None else None
+            except (TypeError, ValueError):
+                duration_seconds = None
             return CallStatusResult(
                 provider_call_id=provider_call_id,
                 status=_STATUS_MAP.get(data.get("call_state", "").lower(), "unknown"),
-                duration_seconds=data.get("call_duration"),
+                duration_seconds=duration_seconds,
                 recording_url=None,
                 raw=data,
             )

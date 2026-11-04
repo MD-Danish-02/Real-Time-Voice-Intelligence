@@ -20,8 +20,6 @@ REQUESTS = Counter("http_requests_total", "HTTP requests", ["method", "status"])
 LATENCY = Histogram("http_request_seconds", "HTTP request latency", ["path"])
 
 
-import asyncio
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging(settings.DEBUG)
@@ -34,25 +32,10 @@ async def lifespan(app: FastAPI):
         for name in ("CRM", "TELEPHONY", "CALENDAR", "WHATSAPP", "STT", "LLM", "TTS"):
             assert getattr(settings, f"{name}_PROVIDER_MODE") != "mock", f"{name} mock provider not allowed in production"
 
-    # Start background ARI listener if Asterisk is reachable
-    ari_task = None
-
-    async def _start_ari_listener():
-        try:
-            from app.telephony.asterisk.ari_client import AsteriskARIClient, run_event_loop
-            from app.telephony.asterisk.event_handler import handle_ari_event
-            ari = AsteriskARIClient()
-            if await ari.ping():
-                await run_event_loop(handle_ari_event)
-        except Exception:
-            pass
-
-    ari_task = asyncio.create_task(_start_ari_listener())
-    try:
-        yield
-    finally:
-        if ari_task and not ari_task.done():
-            ari_task.cancel()
+    # ARI events are consumed by the dedicated ``voice-worker`` process.
+    # Keeping the API process HTTP-only prevents two subscribers from handling
+    # the same Stasis events and creating duplicate call/media sessions.
+    yield
 
 
 app = FastAPI(title=settings.APP_NAME, version="1.0.0", lifespan=lifespan,

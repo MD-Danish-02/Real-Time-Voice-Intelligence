@@ -13,6 +13,7 @@ from typing import Optional
 import httpx
 
 from app.core.config import settings
+from app.providers.provider_safety import require_mock_provider
 
 
 @dataclass
@@ -29,6 +30,10 @@ class WhatsAppProviderError(Exception):
 
 class WhatsAppProvider(ABC):
     provider_name: str = "base"
+
+    def __new__(cls, *args, **kwargs):
+        require_mock_provider(cls.provider_name, "WhatsApp")
+        return super().__new__(cls)
 
     @abstractmethod
     async def send_message(self, *, to_number: str, body: str) -> WhatsAppSendResult:
@@ -116,6 +121,7 @@ class MetaCloudAPIWhatsAppProvider(WhatsAppProvider):
 
 
 def get_whatsapp_provider(provider_name: str) -> WhatsAppProvider:
+    require_mock_provider(provider_name, "WhatsApp")
     if provider_name == "meta_cloud_api":
         return MetaCloudAPIWhatsAppProvider()
     return MockWhatsAppProvider()

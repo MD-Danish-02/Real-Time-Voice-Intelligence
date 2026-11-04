@@ -32,20 +32,12 @@ def _run(coro):
 @celery_app.task(bind=True, autoretry_for=(Exception,), retry_backoff=True, retry_backoff_max=300, max_retries=5)
 def process_crm_event(self, event_id: str):
     async def go():
-        from app.automation.engine import emit
         from app.models.crm import CRMConnection, CRMEvent
-        from app.models.lead import Lead
         from app.services import crm_service
         async with AsyncSessionLocal() as db:
             event = (await db.execute(select(CRMEvent).where(CRMEvent.id == uuid.UUID(event_id)))).scalar_one()
             conn = (await db.execute(select(CRMConnection).where(CRMConnection.id == event.crm_connection_id))).scalar_one()
-            tenant_id = event.tenant_id
-            before = set((await db.execute(select(Lead.id).where(Lead.tenant_id == tenant_id))).scalars().all())
             await crm_service.process_webhook_event(db, event, conn)
-            after = (await db.execute(select(Lead.id).where(Lead.tenant_id == tenant_id))).scalars().all()
-            for lead_id in after:
-                if lead_id not in before:  # a webhook-detected NEW lead goes through the same automation as sync
-                    await emit(db, "lead.created", tenant_id=tenant_id, resource_id=lead_id, resource_type="lead")
     _run(go())
 
 
@@ -54,20 +46,13 @@ def run_crm_sync(self, tenant_id: str, connection_id: str, job_type: str = "incr
     logger.info("run_crm_sync_start", tenant_id=tenant_id, connection_id=connection_id, job_type=job_type)
     async def go():
         from app.models.crm import CRMConnection
-        from app.models.lead import Lead
-        from app.automation.engine import emit
         from app.services import crm_service
         async with AsyncSessionLocal() as db:
             conn = (await db.execute(select(CRMConnection).where(CRMConnection.id == uuid.UUID(connection_id),
                                                                  CRMConnection.tenant_id == uuid.UUID(tenant_id)))).scalar_one()
-            before = set((await db.execute(select(Lead.id).where(Lead.tenant_id == conn.tenant_id))).scalars().all())
-            await crm_service.run_sync_job(db, conn.tenant_id, conn, job_type)
-            after = (await db.execute(select(Lead.id).where(Lead.tenant_id == conn.tenant_id))).scalars().all()
-            for lead_id in after:
-                if lead_id not in before:
-                    await emit(db, "lead.created", tenant_id=conn.tenant_id, resource_id=lead_id, resource_type="lead")
+            job = await crm_service.run_sync_job(db, conn.tenant_id, conn, job_type)
             logger.info("run_crm_sync_complete", tenant_id=tenant_id, connection_id=connection_id, job_type=job_type,
-                        new_leads=len([l for l in after if l not in before]))
+                        new_leads=job.records_created)
     _run(go())
 
 

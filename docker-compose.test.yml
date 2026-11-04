@@ -1,0 +1,84 @@
+# Isolated, disposable services for the API test suite only.
+# Run with a dedicated project name (for example: -p voxai-riya-test) so the
+# named volumes and network cannot collide with the application Compose stack.
+#
+# SAFETY: apps/api/tests/conftest.py runs Alembic migrations, truncates every
+# public PostgreSQL table, and FLUSHDBs the configured TEST_REDIS_URL database
+# before each test. Never point test URLs at application services or data.
+#
+# Supply VOXAI_TEST_POSTGRES_PASSWORD_FILE as a protected, test-only secret file
+# path before using Compose. Do not put a password in this file or shell history.
+# Also supply VOXAI_TEST_REDIS_ACL_FILE and VOXAI_TEST_REDIS_PASSWORD_FILE.
+# The external ACL file must contain exactly these rules, with a generated
+# SHA-256 value replacing the placeholder:
+#
+#   user default off
+#   user voxai_test on #<64-lowercase-hex-sha256> -@all ~ratelimit:* ~lead-call-lock:* &events:* +ping +flushdb +incr +expire +set +del +publish
+#
+# Authenticated PING confirms connectivity and credentials; it does not prove
+# that Redis loaded the expected ACL into its live in-memory state.
+
+name: voxai-riya-test
+
+services:
+  postgres-test:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: voxai_test
+      POSTGRES_USER: voxai_test
+      POSTGRES_PASSWORD_FILE: /run/secrets/test_postgres_password
+    secrets:
+      - test_postgres_password
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+    networks:
+      - test_only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis-test:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--aclfile", "/run/secrets/test_redis_acl"]
+    ports:
+      - "127.0.0.1:56379:6379"
+    volumes:
+      - redis_test_data:/data
+    networks:
+      - test_only
+    secrets:
+      - test_redis_acl
+      - test_redis_password
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          output=$$(REDISCLI_AUTH="$$(cat /run/secrets/test_redis_password)"
+          redis-cli --user voxai_test -h 127.0.0.1 ping)
+          && [ "$$output" = "PONG" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+networks:
+  test_only:
+    name: voxai-riya-test_test_only
+    internal: true
+
+volumes:
+  postgres_test_data:
+    name: voxai-riya-test_postgres_test_data
+  redis_test_data:
+    name: voxai-riya-test_redis_test_data
+
+secrets:
+  test_postgres_password:
+    file: ${VOXAI_TEST_POSTGRES_PASSWORD_FILE:?Set a protected test-only PostgreSQL password file path}
+  test_redis_acl:
+    file: ${VOXAI_TEST_REDIS_ACL_FILE:?Set a protected test-only Redis ACL file path}
+  test_redis_password:
+    file: ${VOXAI_TEST_REDIS_PASSWORD_FILE:?Set a protected test-only Redis password file path}
