@@ -17,3 +17,5 @@ models/
 !apps/api/app/models/*.py
 openapi.json
 test_login.json
+.venv/
+.venv312/
