@@ -775,7 +775,8 @@ async def _perform_channel_hangup(
         if call is None:
             call = (await db.execute(select(Call).where(Call.provider_call_id == channel_id))).scalar_one_or_none()
         if call is None:
-            _channel_to_call_id.pop(channel_id, None)
+            if cleanup_error is None:
+                _channel_to_call_id.pop(channel_id, None)
             return
 
         # Session already closed above for the call_id path; this handles the fallback
@@ -784,7 +785,8 @@ async def _perform_channel_hangup(
             media_session_manager.close_session(str(call.id))
 
         if call.status in {"completed", "failed", "no_answer", "busy"}:
-            _channel_to_call_id.pop(channel_id, None)
+            if cleanup_error is None:
+                _channel_to_call_id.pop(channel_id, None)
             return
 
         now = datetime.now(timezone.utc)
@@ -798,7 +800,8 @@ async def _perform_channel_hangup(
             duration_seconds=duration,
             end_reason=kind,
         )
-        _channel_to_call_id.pop(channel_id, None)
+        if cleanup_error is None:
+            _channel_to_call_id.pop(channel_id, None)
         await publish_event(call.tenant_id, "CALL_ENDED", {"call_id": str(call.id)})
 
         # Post-call transcript & analysis pipeline
